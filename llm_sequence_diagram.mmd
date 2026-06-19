@@ -1,0 +1,35 @@
+sequenceDiagram
+actor User
+participant LLM
+participant LLMEngine
+participant InputProcessor
+participant EngineCoreClient
+participant EngineCore
+participant Scheduler
+participant Executor
+participant OutputProcessor
+
+User->>LLM: generate(prompts, sampling_params)
+LLM->>LLMEngine: add_request(request_id, prompt, params)
+LLMEngine->>InputProcessor: process_inputs()
+InputProcessor-->>LLMEngine: EngineCoreRequest
+LLMEngine->>OutputProcessor: add_request()
+LLMEngine->>EngineCoreClient: add_request(EngineCoreRequest)
+EngineCoreClient->>EngineCore: add_request(Request)
+EngineCore->>Scheduler: add_request()
+
+loop until finished
+  LLM->>LLMEngine: step()
+  LLMEngine->>EngineCoreClient: get_output()
+  EngineCoreClient->>EngineCore: step()
+  EngineCore->>Scheduler: schedule()
+  EngineCore->>Executor: execute_model(scheduler_output)
+  Executor-->>EngineCore: model_output
+  EngineCore->>Scheduler: update_from_output()
+  Scheduler-->>EngineCore: EngineCoreOutputs
+  EngineCore-->>LLMEngine: EngineCoreOutputs
+  LLMEngine->>OutputProcessor: process_outputs()
+  OutputProcessor-->>LLMEngine: RequestOutput
+end
+
+LLM-->>User: list[RequestOutput]

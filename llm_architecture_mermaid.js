@@ -1,0 +1,287 @@
+// Mermaid diagrams for the vLLM LLM architecture.
+// Run with: node llm_architecture_mermaid.js
+// It writes two .mmd files next to this script.
+
+const fs = require("fs");
+const path = require("path");
+
+const classDiagram = String.raw`classDiagram
+direction TB
+
+class LLM {
+  +llm_engine: LLMEngine
+  +model_config
+  +engine_class
+  +request_counter
+  +supported_tasks
+  +renderer
+  +input_processor
+  +generate()
+  +chat()
+  +enqueue()
+  +_add_request()
+  +_run_engine()
+}
+
+class EngineArgs {
+  +model
+  +tokenizer
+  +runner
+  +dtype
+  +tensor_parallel_size
+  +pipeline_parallel_size
+  +data_parallel_size
+  +gpu_memory_utilization
+  +kv_cache_memory_bytes
+  +quantization
+  +enable_lora
+  +speculative_config
+  +compilation_config
+  +create_engine_config()
+}
+
+class VllmConfig {
+  +model_config
+  +cache_config
+  +parallel_config
+  +scheduler_config
+  +device_config
+  +load_config
+  +lora_config
+  +speculative_config
+  +observability_config
+  +quant_config
+  +compilation_config
+}
+
+class LLMEngine {
+  +vllm_config: VllmConfig
+  +model_config
+  +renderer
+  +input_processor: InputProcessor
+  +output_processor: OutputProcessor
+  +engine_core: EngineCoreClient
+  +from_engine_args()
+  +add_request()
+  +step()
+  +get_supported_tasks()
+  +collective_rpc()
+}
+
+class InputProcessor {
+  +process_inputs()
+  +assign_request_id()
+}
+
+class OutputProcessor {
+  +add_request()
+  +process_outputs()
+  +abort_requests()
+  +has_unfinished_requests()
+}
+
+class EngineCoreClient {
+  <<abstract>>
+  +make_client()
+  +add_request()
+  +get_output()
+  +abort_requests()
+  +collective_rpc()
+}
+
+class InprocClient {
+  +engine_core: EngineCore
+}
+
+class MPClient {
+  +vllm_config
+  +core_engines
+  +input_socket
+  +resources
+}
+
+class SyncMPClient {
+  +outputs_queue
+  +get_output()
+  +call_utility()
+}
+
+class AsyncMPClient {
+  +outputs_queue
+  +get_output_async()
+  +call_utility_async()
+}
+
+class DPAsyncMPClient
+class DPLBAsyncMPClient
+
+class EngineCore {
+  +vllm_config
+  +model_executor: Executor
+  +scheduler: SchedulerInterface
+  +structured_output_manager
+  +batch_queue
+  +step_fn
+  +add_request()
+  +preprocess_add_request()
+  +step()
+  +post_step()
+}
+
+class EngineCoreProc {
+  +input_queue
+  +output_queue
+  +engine_index
+  +run_busy_loop()
+  +_process_input_queue()
+  +_process_engine_step()
+}
+
+class DPEngineCoreProc
+class EngineCoreActor
+
+class Executor {
+  <<abstract>>
+  +get_class()
+  +execute_model()
+  +determine_available_memory()
+  +initialize_from_config()
+  +collective_rpc()
+}
+
+class UniProcExecutor
+class MultiprocExecutor
+class RayDistributedExecutor
+class RayExecutorV2
+class ExecutorWithExternalLauncher
+
+class SchedulerInterface {
+  <<abstract>>
+  +schedule()
+  +update_from_output()
+  +add_request()
+  +has_requests()
+}
+
+class Scheduler
+class AsyncScheduler
+
+class EngineCoreRequest {
+  +request_id
+  +prompt_token_ids
+  +mm_features
+  +sampling_params
+  +pooling_params
+  +arrival_time
+  +lora_request
+  +priority
+  +client_index
+  +current_wave
+}
+
+class EngineCoreOutputs {
+  +engine_index
+  +outputs
+  +scheduler_stats
+  +timestamp
+  +utility_output
+  +finished_requests
+}
+
+class EngineCoreOutput {
+  +request_id
+  +new_token_ids
+  +finish_reason
+  +pooling_output
+  +events
+  +finished
+}
+
+LLM ..> EngineArgs : creates
+EngineArgs --> VllmConfig : create_engine_config()
+LLM *-- LLMEngine : self.llm_engine
+
+LLMEngine *-- VllmConfig
+LLMEngine *-- InputProcessor
+LLMEngine *-- OutputProcessor
+LLMEngine *-- EngineCoreClient : engine_core
+LLMEngine ..> EngineCoreRequest : add_request
+
+EngineCoreClient <|-- InprocClient
+EngineCoreClient <|-- MPClient
+MPClient <|-- SyncMPClient
+MPClient <|-- AsyncMPClient
+AsyncMPClient <|-- DPAsyncMPClient
+DPAsyncMPClient <|-- DPLBAsyncMPClient
+
+InprocClient *-- EngineCore
+MPClient ..> EngineCoreProc : background process / ZMQ
+
+EngineCore <|-- EngineCoreProc
+EngineCoreProc <|-- DPEngineCoreProc
+EngineCoreProc <|-- EngineCoreActor
+
+EngineCore *-- Executor : model_executor
+EngineCore *-- SchedulerInterface : scheduler
+EngineCore ..> EngineCoreOutputs : returns
+
+Executor <|-- UniProcExecutor
+Executor <|-- MultiprocExecutor
+Executor <|-- RayDistributedExecutor
+MultiprocExecutor <|-- RayExecutorV2
+UniProcExecutor <|-- ExecutorWithExternalLauncher
+
+SchedulerInterface <|-- Scheduler
+Scheduler <|-- AsyncScheduler
+
+EngineCoreOutputs *-- EngineCoreOutput`;
+
+const sequenceDiagram = String.raw`sequenceDiagram
+actor User
+participant LLM
+participant LLMEngine
+participant InputProcessor
+participant EngineCoreClient
+participant EngineCore
+participant Scheduler
+participant Executor
+participant OutputProcessor
+
+User->>LLM: generate(prompts, sampling_params)
+LLM->>LLMEngine: add_request(request_id, prompt, params)
+LLMEngine->>InputProcessor: process_inputs()
+InputProcessor-->>LLMEngine: EngineCoreRequest
+LLMEngine->>OutputProcessor: add_request()
+LLMEngine->>EngineCoreClient: add_request(EngineCoreRequest)
+EngineCoreClient->>EngineCore: add_request(Request)
+EngineCore->>Scheduler: add_request()
+
+loop until finished
+  LLM->>LLMEngine: step()
+  LLMEngine->>EngineCoreClient: get_output()
+  EngineCoreClient->>EngineCore: step()
+  EngineCore->>Scheduler: schedule()
+  EngineCore->>Executor: execute_model(scheduler_output)
+  Executor-->>EngineCore: model_output
+  EngineCore->>Scheduler: update_from_output()
+  Scheduler-->>EngineCore: EngineCoreOutputs
+  EngineCore-->>LLMEngine: EngineCoreOutputs
+  LLMEngine->>OutputProcessor: process_outputs()
+  OutputProcessor-->>LLMEngine: RequestOutput
+end
+
+LLM-->>User: list[RequestOutput]`;
+
+const files = {
+  "llm_class_diagram.mmd": classDiagram,
+  "llm_sequence_diagram.mmd": sequenceDiagram,
+};
+
+for (const [fileName, content] of Object.entries(files)) {
+  fs.writeFileSync(path.join(__dirname, fileName), content + "\n", "utf8");
+}
+
+console.log("Generated:");
+for (const fileName of Object.keys(files)) {
+  console.log(`- ${path.join(__dirname, fileName)}`);
+}
