@@ -18,6 +18,11 @@ from vllm.distributed.kv_transfer.kv_connector.v1.offloading.metrics import (
     OffloadingConnectorStats,
     _TransferMetricName,
 )
+from vllm.distributed.kv_transfer.kv_connector.v1.offloading.slot_policy import (
+    SlotOffloadConfig,
+    classify_offload_block,
+    should_store_offload_block,
+)
 from vllm.logger import init_logger
 from vllm.utils.math_utils import cdiv, round_down
 from vllm.v1.core.kv_cache_manager import KVCacheBlocks
@@ -121,6 +126,8 @@ class SchedulerOffloadConfig(NamedTuple):
     block_size_factor: int
     num_workers: int
     offload_prompt_only: bool
+    slot_offload_config: SlotOffloadConfig
+    slot_offload_log_decisions: bool
 
     @classmethod
     def from_spec(cls, spec: OffloadingSpec) -> "SchedulerOffloadConfig":
@@ -206,6 +213,10 @@ class SchedulerOffloadConfig(NamedTuple):
             ),
             block_size_factor=spec.block_size_factor,
             offload_prompt_only=spec.offload_prompt_only,
+            slot_offload_config=SlotOffloadConfig.from_extra_config(spec.extra_config),
+            slot_offload_log_decisions=bool(
+                spec.extra_config.get("slot_offload_log_decisions", False)
+            ),
         )
 
 
@@ -883,6 +894,45 @@ class OffloadingConnectorScheduler:
                         pos_in_segment = abs_block_idx % alignment_block_count
                         if pos_in_segment < alignment_block_count - tail:
                             continue
+                    abs_block_idx = start_block_idx + key_idx
+                    should_store = should_store_offload_block(
+                        self.config.slot_offload_config,
+                        req.kv_transfer_params,
+                        abs_block_idx,
+                        group_config.offloaded_block_size,
+                    )
+                    if self.config.slot_offload_log_decisions:
+                        block_type = classify_offload_block(
+                            req.kv_transfer_params,
+                            abs_block_idx,
+                            group_config.offloaded_block_size,
+                        )
+                        token_start = (
+                            abs_block_idx * group_config.offloaded_block_size
+                        )
+                        token_end = min(
+                            token_start + group_config.offloaded_block_size,
+                            req.num_prompt_tokens,
+                        )
+                        token_ids = (
+                            list(req.prompt_token_ids[token_start:token_end])
+                            if req.prompt_token_ids is not None
+                            else None
+                        )
+                        logger.info(
+                            "SlotOffload request=%s group=%d block=%d "
+                            "tokens=[%d,%d) type=%s decision=%s token_ids=%s",
+                            req_id,
+                            group_config.group_idx,
+                            abs_block_idx,
+                            token_start,
+                            token_end,
+                            block_type,
+                            "STORE" if should_store else "SKIP",
+                            token_ids,
+                        )
+                    if not should_store:
+                        continue
                     new_offload_keys.append(offload_key)
 
             if not new_offload_keys:

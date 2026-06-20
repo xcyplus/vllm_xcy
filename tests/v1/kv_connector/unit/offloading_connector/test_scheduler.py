@@ -172,6 +172,34 @@ def test_offloading_connector(request_runner, async_scheduling: bool):
 
 
 @pytest.mark.parametrize("async_scheduling", [True, False])
+def test_slot_aware_offload_filters_slot_blocks(request_runner, async_scheduling: bool):
+    block_size = 4
+    runner = request_runner(
+        block_size=block_size,
+        num_gpu_blocks=100,
+        async_scheduling=async_scheduling,
+        extra_config_overrides={
+            "slot_offload_policy": "prefer_template",
+            "slot_offload_store_types": ["instruction", "schema", "unknown"],
+        },
+    )
+
+    runner.new_request(
+        token_ids=[0] * block_size * 3,
+        kv_transfer_params={
+            "slot_offload": {
+                "block_types": ["instruction", "schema", "slot"],
+            },
+        },
+    )
+    runner.manager.prepare_store.side_effect = lambda keys, req_context: (
+        generate_store_output(keys)
+    )
+
+    runner.run(decoded_tokens=[EOS_TOKEN_ID], expected_stored=(0, 1))
+
+
+@pytest.mark.parametrize("async_scheduling", [True, False])
 def test_request_preemption(request_runner, async_scheduling: bool):
     block_size = 4
     block_size_factor = 3
