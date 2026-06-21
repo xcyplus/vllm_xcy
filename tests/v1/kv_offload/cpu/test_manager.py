@@ -62,6 +62,17 @@ def to_keys(int_hashes: list[int]) -> list[OffloadKey]:
     return [to_key(i) for i in int_hashes]
 
 
+def test_cache_usage_tracks_occupied_blocks():
+    manager = make_cpu_manager(num_blocks=4)
+    assert manager.get_cache_usage() == 0.0
+
+    manager.prepare_store(to_keys([1, 2]), _EMPTY_REQ_CTX)
+    assert manager.get_cache_usage() == 0.5
+
+    manager.complete_store(to_keys([1, 2]), _EMPTY_REQ_CTX, success=False)
+    assert manager.get_cache_usage() == 0.0
+
+
 def verify_store_output(
     prepare_store_output: PrepareStoreOutput | None,
     expected_prepare_store_output: ExpectedPrepareStoreOutput,

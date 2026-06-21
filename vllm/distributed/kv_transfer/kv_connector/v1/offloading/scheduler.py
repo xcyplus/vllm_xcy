@@ -19,9 +19,8 @@ from vllm.distributed.kv_transfer.kv_connector.v1.offloading.metrics import (
     _TransferMetricName,
 )
 from vllm.distributed.kv_transfer.kv_connector.v1.offloading.slot_policy import (
+    SlotOffloadAdmissionPolicy,
     SlotOffloadConfig,
-    classify_offload_block,
-    should_store_offload_block,
 )
 from vllm.logger import init_logger
 from vllm.utils.math_utils import cdiv, round_down
@@ -324,6 +323,16 @@ class OffloadingConnectorScheduler:
     ):
         self.config = SchedulerOffloadConfig.from_spec(spec)
         self.manager: OffloadingManager = spec.get_manager()
+        kv_bytes_per_block = int(
+            spec.extra_config.get(
+                "slot_offload_kv_bytes_per_block",
+                getattr(spec, "kv_bytes_per_offloaded_block", 0),
+            )
+        )
+        self._slot_admission = SlotOffloadAdmissionPolicy(
+            self.config.slot_offload_config,
+            kv_bytes_per_block=kv_bytes_per_block,
+        )
         self._connector_stats: OffloadingConnectorStats | None = None
 
         full_attention_groups: list[int] = []
@@ -826,6 +835,12 @@ class OffloadingConnectorScheduler:
     ) -> dict[int, TransferJob]:
         block_size_factor = self.config.block_size_factor
         store_jobs: dict[int, TransferJob] = {}
+        raw_cache_pressure = self.manager.get_cache_usage()
+        cache_pressure = (
+            float(raw_cache_pressure)
+            if isinstance(raw_cache_pressure, (int, float))
+            else 0.0
+        )
         for req_id in scheduler_output.num_scheduled_tokens:
             req_status = self._req_status.get(req_id)
             if req_status is None:
@@ -895,18 +910,14 @@ class OffloadingConnectorScheduler:
                         if pos_in_segment < alignment_block_count - tail:
                             continue
                     abs_block_idx = start_block_idx + key_idx
-                    should_store = should_store_offload_block(
-                        self.config.slot_offload_config,
-                        req.kv_transfer_params,
-                        abs_block_idx,
-                        group_config.offloaded_block_size,
+                    decision = self._slot_admission.evaluate(
+                        key=offload_key,
+                        kv_transfer_params=req.kv_transfer_params,
+                        block_idx=abs_block_idx,
+                        offloaded_block_size=group_config.offloaded_block_size,
+                        cache_pressure=cache_pressure,
                     )
                     if self.config.slot_offload_log_decisions:
-                        block_type = classify_offload_block(
-                            req.kv_transfer_params,
-                            abs_block_idx,
-                            group_config.offloaded_block_size,
-                        )
                         token_start = (
                             abs_block_idx * group_config.offloaded_block_size
                         )
@@ -921,17 +932,31 @@ class OffloadingConnectorScheduler:
                         )
                         logger.info(
                             "SlotOffload request=%s group=%d block=%d "
-                            "tokens=[%d,%d) type=%s decision=%s token_ids=%s",
+                            "tokens=[%d,%d) type=%s shared=%.3f slot=%.3f "
+                            "accesses=%d structure=%.3f hotness=%.3f cost=%.3f "
+                            "benefit_us=%.3f pressure=%.3f value=%.3f "
+                            "threshold=%.3f decision=%s reason=%s token_ids=%s",
                             req_id,
                             group_config.group_idx,
                             abs_block_idx,
                             token_start,
                             token_end,
-                            block_type,
-                            "STORE" if should_store else "SKIP",
+                            decision.block_type,
+                            decision.shared_ratio,
+                            decision.slot_ratio,
+                            decision.access_count,
+                            decision.structure_score,
+                            decision.hotness_score,
+                            decision.cost_score,
+                            decision.expected_benefit_us,
+                            decision.cache_pressure,
+                            decision.value_score,
+                            decision.threshold,
+                            "STORE" if decision.should_store else "SKIP",
+                            decision.reason,
                             token_ids,
                         )
-                    if not should_store:
+                    if not decision.should_store:
                         continue
                     new_offload_keys.append(offload_key)
 

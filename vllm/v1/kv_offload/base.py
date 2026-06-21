@@ -315,6 +315,10 @@ class OffloadingManager(ABC):
         """Return collected metrics since last call, or None if disabled."""
         return None
 
+    def get_cache_usage(self) -> float | None:
+        """Return offload-cache occupancy in ``[0, 1]``, when available."""
+        return None
+
     def shutdown(self) -> None:
         """Shutdown the manager and release any resources."""
         return

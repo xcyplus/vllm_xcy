@@ -76,6 +76,13 @@ class CPUOffloadingManager(OffloadingManager):
     def _get_num_free_blocks(self) -> int:
         return len(self._free_list) + self._num_blocks - self._num_allocated_blocks
 
+    @override
+    def get_cache_usage(self) -> float:
+        if self._num_blocks == 0:
+            return 0.0
+        used_blocks = self._num_blocks - self._get_num_free_blocks()
+        return used_blocks / self._num_blocks
+
     def _allocate_blocks(self, keys: list[OffloadKey]) -> list[BlockStatus]:
         num_fresh = min(len(keys), self._num_blocks - self._num_allocated_blocks)
         num_reused = len(keys) - num_fresh

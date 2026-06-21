@@ -200,6 +200,50 @@ def test_slot_aware_offload_filters_slot_blocks(request_runner, async_scheduling
 
 
 @pytest.mark.parametrize("async_scheduling", [True, False])
+def test_value_aware_offload_admits_reused_shared_blocks(
+    request_runner, async_scheduling: bool
+):
+    block_size = 4
+    config = {
+        "slot_offload_policy": "value_aware",
+        "slot_offload_min_accesses": 2,
+        "slot_offload_base_threshold": 0.0,
+        "slot_offload_pressure_scale": 0.0,
+        "slot_offload_kv_bytes_per_block": 1024,
+    }
+    runner = request_runner(
+        block_size=block_size,
+        num_gpu_blocks=100,
+        async_scheduling=async_scheduling,
+        extra_config_overrides=config,
+    )
+    params = {
+        "slot_offload": {
+            "block_types": ["instruction", "schema", "slot"],
+        }
+    }
+
+    runner.new_request(
+        token_ids=[0] * block_size * 3,
+        kv_transfer_params=params,
+    )
+    runner.manager.prepare_store.side_effect = lambda keys, req_context: (
+        generate_store_output(keys)
+    )
+    runner.run(decoded_tokens=[EOS_TOKEN_ID], expected_stored=())
+
+    runner.scheduler.reset_prefix_cache()
+    runner.new_request(
+        token_ids=[0] * block_size * 3,
+        kv_transfer_params=params,
+    )
+    runner.manager.prepare_store.side_effect = lambda keys, req_context: (
+        generate_store_output(keys)
+    )
+    runner.run(decoded_tokens=[EOS_TOKEN_ID], expected_stored=(0, 1))
+
+
+@pytest.mark.parametrize("async_scheduling", [True, False])
 def test_request_preemption(request_runner, async_scheduling: bool):
     block_size = 4
     block_size_factor = 3
