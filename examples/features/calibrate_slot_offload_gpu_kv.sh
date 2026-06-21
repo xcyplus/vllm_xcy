@@ -106,7 +106,7 @@ for model in "${MODELS[@]}"; do
   for iteration in $(seq 1 "$MAX_ITERATIONS"); do
     server_log="${model_dir}/iteration-${iteration}.log"
     echo "  iteration=${iteration}, gpu_kv_bytes=${current_bytes}"
-    vllm serve "$model" \
+    .venv/bin/python -m vllm.entrypoints.cli.main serve "$model" \
       --port "$PORT" \
       --enforce-eager \
       --generation-config vllm \

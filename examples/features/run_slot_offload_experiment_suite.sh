@@ -170,7 +170,7 @@ start_server() {
   local cpu_bytes="$2"
   local server_log="$3"
   local command=(
-    vllm serve "$MODEL"
+    .venv/bin/python -m vllm.entrypoints.cli.main serve "$MODEL"
     --port "$PORT"
     --enforce-eager
     --generation-config vllm

@@ -60,7 +60,7 @@ JSON
 )
 
 echo "Starting ${MODE} server; logs: ${RESULT_DIR}/server.log"
-vllm serve "$MODEL" \
+.venv/bin/python -m vllm.entrypoints.cli.main serve "$MODEL" \
   --port "$PORT" \
   --enforce-eager \
   --generation-config vllm \
