@@ -53,6 +53,9 @@ def test_aggregate_runs_computes_seed_statistics_and_native_changes():
     assert value["run_count"] == 2
     assert value["ttft_mean_ms_mean"] == 9.0
     assert value["ttft_mean_ms_stdev"] == pytest.approx(2**0.5)
-    assert value["ttft_reduction_vs_native_pct"] == pytest.approx(18.1818)
+    expected_ttft_reduction = 100 * (1 - 9 / 11)
+    assert value["ttft_reduction_vs_native_pct"] == pytest.approx(
+        expected_ttft_reduction
+    )
     assert value["store_reduction_vs_native_pct"] == 80.0
     assert value["hit_retention_vs_native_pct"] == 100.0
