@@ -9,6 +9,7 @@ import random
 import statistics
 import time
 import urllib.request
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -27,6 +28,325 @@ METRIC_NAMES = (
     "vllm:prefix_cache_hits_total",
     "vllm:external_prefix_cache_queries_total",
     "vllm:external_prefix_cache_hits_total",
+)
+
+
+@dataclass(frozen=True)
+class ScenarioTemplate:
+    """A representative structured-prompt workload scenario."""
+
+    name: str
+    role: str
+    rules: tuple[str, ...]
+    input_fields: tuple[str, ...]
+    output_fields: tuple[str, ...]
+
+    def build_instruction(self) -> str:
+        rules = "\n".join(
+            f"{index}. {rule}" for index, rule in enumerate(self.rules, start=1)
+        )
+        return (
+            f"You are {self.role}. Apply the following policy exactly.\n"
+            f"{rules}\n"
+            "Do not invent missing facts and explain every decision.\n"
+        )
+
+    def build_schema(self) -> str:
+        return (
+            f"Input fields: {', '.join(self.input_fields)}.\n"
+            f"Output fields: {', '.join(self.output_fields)}.\n"
+            "Analyze only the following instance values.\n"
+        )
+
+
+SCENARIO_TEMPLATES = (
+    ScenarioTemplate(
+        name="personal_loan",
+        role="a personal-loan risk analyst",
+        rules=(
+            "Treat credit scores below 600 as high risk.",
+            "Flag debt above twelve months of income as excessive.",
+            "Escalate applicants with more than two overdue payments.",
+        ),
+        input_fields=(
+            "customer_id",
+            "age",
+            "monthly_income",
+            "debt",
+            "credit_score",
+            "overdue_count",
+            "requested_amount",
+        ),
+        output_fields=("risk_level", "reasons", "approval", "advice"),
+    ),
+    ScenarioTemplate(
+        name="mortgage_review",
+        role="a residential-mortgage reviewer",
+        rules=(
+            "Require at least two years of continuous employment.",
+            "Flag requested amounts above eighty percent of collateral value.",
+            "Escalate applications with credit scores below 640.",
+        ),
+        input_fields=(
+            "customer_id",
+            "monthly_income",
+            "debt",
+            "credit_score",
+            "employment_years",
+            "collateral_value",
+            "requested_amount",
+        ),
+        output_fields=("risk_level", "loan_to_value", "approval", "conditions"),
+    ),
+    ScenarioTemplate(
+        name="credit_card_limit",
+        role="a credit-card limit analyst",
+        rules=(
+            "Reject limit increases when utilization exceeds ninety percent.",
+            "Escalate customers with two or more overdue payments.",
+            "Cap the recommended limit at three months of income.",
+        ),
+        input_fields=(
+            "customer_id",
+            "monthly_income",
+            "credit_score",
+            "overdue_count",
+            "utilization_ratio",
+            "requested_limit",
+        ),
+        output_fields=("risk_level", "recommended_limit", "approval", "reasons"),
+    ),
+    ScenarioTemplate(
+        name="small_business_loan",
+        role="a small-business lending analyst",
+        rules=(
+            "Escalate businesses operating for less than two years.",
+            "Reject requests above half of annual revenue.",
+            "Flag non-positive annual profit as high risk.",
+        ),
+        input_fields=(
+            "business_id",
+            "years_in_business",
+            "annual_revenue",
+            "annual_profit",
+            "existing_debt",
+            "requested_amount",
+        ),
+        output_fields=("risk_level", "cash_flow_assessment", "approval", "reasons"),
+    ),
+    ScenarioTemplate(
+        name="transaction_fraud",
+        role="a payment-fraud investigator",
+        rules=(
+            "Block transactions when anomaly score is at least 0.85.",
+            "Escalate high-risk countries combined with untrusted devices.",
+            "Review accounts with three or more failed attempts.",
+        ),
+        input_fields=(
+            "transaction_id",
+            "transaction_amount",
+            "country_risk",
+            "device_trust",
+            "failed_attempts",
+            "anomaly_score",
+        ),
+        output_fields=("fraud_risk", "action", "reasons", "review_priority"),
+    ),
+    ScenarioTemplate(
+        name="insurance_underwriting",
+        role="a health-insurance underwriter",
+        rules=(
+            "Escalate smokers requesting high coverage.",
+            "Flag BMI values above 35 for medical review.",
+            "Require review when two or more chronic conditions are reported.",
+        ),
+        input_fields=(
+            "applicant_id",
+            "age",
+            "bmi",
+            "smoker",
+            "chronic_conditions",
+            "coverage_amount",
+        ),
+        output_fields=("risk_class", "premium_factor", "decision", "requirements"),
+    ),
+    ScenarioTemplate(
+        name="health_screening",
+        role="a preventive-health screening assistant",
+        rules=(
+            "Flag fasting glucose above 7.0 as elevated.",
+            "Flag systolic pressure at or above 140 as hypertensive.",
+            "Recommend clinical review when multiple risk indicators coexist.",
+        ),
+        input_fields=(
+            "patient_id",
+            "age",
+            "bmi",
+            "blood_glucose",
+            "systolic_bp",
+            "diastolic_bp",
+        ),
+        output_fields=("risk_level", "risk_factors", "recommendations", "urgency"),
+    ),
+    ScenarioTemplate(
+        name="support_ticket_triage",
+        role="a customer-support ticket triage assistant",
+        rules=(
+            "Prioritize security and payment issues over general questions.",
+            "Escalate negative sentiment after two previous contacts.",
+            "Give premium customers priority when severity is equal.",
+        ),
+        input_fields=(
+            "ticket_id",
+            "customer_tier",
+            "issue_category",
+            "sentiment",
+            "wait_hours",
+            "previous_contacts",
+        ),
+        output_fields=("priority", "queue", "escalation", "response_strategy"),
+    ),
+    ScenarioTemplate(
+        name="supplier_risk",
+        role="a supplier-risk analyst",
+        rules=(
+            "Flag on-time delivery rates below ninety percent.",
+            "Escalate defect rates above five percent.",
+            "Treat dependency ratios above sixty percent as concentration risk.",
+        ),
+        input_fields=(
+            "supplier_id",
+            "on_time_rate",
+            "defect_rate",
+            "financial_score",
+            "dependency_ratio",
+        ),
+        output_fields=("risk_level", "risk_factors", "action", "monitoring_plan"),
+    ),
+    ScenarioTemplate(
+        name="contract_compliance",
+        role="a commercial-contract compliance reviewer",
+        rules=(
+            "Escalate contracts with missing liability or termination clauses.",
+            "Require legal review for high-risk jurisdictions.",
+            "Apply enhanced review when contract value exceeds one million.",
+        ),
+        input_fields=(
+            "contract_id",
+            "contract_value",
+            "jurisdiction_risk",
+            "missing_clauses",
+            "counterparty_risk",
+        ),
+        output_fields=("compliance_level", "issues", "required_review", "actions"),
+    ),
+    ScenarioTemplate(
+        name="assignment_grading",
+        role="an academic-assignment grading assistant",
+        rules=(
+            "Use rubric score as the primary grade component.",
+            "Flag plagiarism scores above 0.30 for manual review.",
+            "Apply the stated late penalty without changing rubric feedback.",
+        ),
+        input_fields=(
+            "student_id",
+            "rubric_score",
+            "citation_count",
+            "plagiarism_score",
+            "late_days",
+        ),
+        output_fields=("final_grade", "rubric_feedback", "integrity_flag", "advice"),
+    ),
+    ScenarioTemplate(
+        name="cybersecurity_alert",
+        role="a security-operations alert analyst",
+        rules=(
+            "Treat privileged-account anomalies as critical.",
+            "Escalate anomaly scores above 0.80.",
+            "Increase priority when more than five hosts are affected.",
+        ),
+        input_fields=(
+            "alert_id",
+            "severity",
+            "affected_hosts",
+            "privilege_level",
+            "anomaly_score",
+        ),
+        output_fields=("incident_priority", "containment", "reasons", "next_steps"),
+    ),
+    ScenarioTemplate(
+        name="employee_attrition",
+        role="an employee-retention risk analyst",
+        rules=(
+            "Flag satisfaction scores below forty as high risk.",
+            "Escalate sustained overtime above sixty hours per month.",
+            "Treat below-market salary ratios as an additional risk factor.",
+        ),
+        input_fields=(
+            "employee_id",
+            "tenure_years",
+            "overtime_hours",
+            "satisfaction_score",
+            "salary_ratio",
+        ),
+        output_fields=(
+            "attrition_risk",
+            "risk_factors",
+            "retention_actions",
+            "priority",
+        ),
+    ),
+    ScenarioTemplate(
+        name="logistics_exception",
+        role="a logistics-exception coordinator",
+        rules=(
+            "Escalate temperature breaches for controlled goods.",
+            "Treat delays above twenty-four hours as severe.",
+            "Prioritize high-value shipments on high-risk routes.",
+        ),
+        input_fields=(
+            "shipment_id",
+            "delay_hours",
+            "temperature_breach",
+            "route_risk",
+            "goods_value",
+        ),
+        output_fields=("severity", "action", "customer_notice", "recovery_plan"),
+    ),
+    ScenarioTemplate(
+        name="content_moderation",
+        role="a content-safety moderation assistant",
+        rules=(
+            "Remove content with severe violence or self-harm risk.",
+            "Escalate toxicity scores above 0.85.",
+            "Use user reports as supporting evidence, not sole evidence.",
+        ),
+        input_fields=(
+            "content_id",
+            "toxicity_score",
+            "violence_score",
+            "self_harm_score",
+            "user_reports",
+        ),
+        output_fields=("safety_level", "action", "policy_reasons", "review_required"),
+    ),
+    ScenarioTemplate(
+        name="predictive_maintenance",
+        role="an industrial predictive-maintenance analyst",
+        rules=(
+            "Escalate vibration readings above 8.0 millimeters per second.",
+            "Flag operating temperatures above ninety degrees Celsius.",
+            "Prioritize assets with repeated faults and long operating hours.",
+        ),
+        input_fields=(
+            "asset_id",
+            "vibration",
+            "temperature",
+            "operating_hours",
+            "fault_count",
+        ),
+        output_fields=("failure_risk", "maintenance_priority", "reasons", "actions"),
+    ),
 )
 
 
@@ -67,50 +387,126 @@ def read_metrics(endpoint: str) -> dict[str, float]:
     return metrics
 
 
+def build_instance_values(group_idx: int, repeat_idx: int) -> dict[str, str]:
+    """Build deterministic values covering all representative scenarios."""
+
+    serial = group_idx * 100 + repeat_idx
+    return {
+        "customer_id": f"C{group_idx:03d}-{repeat_idx:04d}",
+        "age": str(20 + (repeat_idx * 7 + group_idx) % 55),
+        "monthly_income": str(5_000 + repeat_idx * 317 + group_idx * 41),
+        "debt": str(10_000 + repeat_idx * 997 + group_idx * 113),
+        "credit_score": str(520 + (repeat_idx * 17 + group_idx) % 260),
+        "overdue_count": str((repeat_idx + group_idx) % 6),
+        "requested_amount": str(50_000 + repeat_idx * 1_231 + group_idx * 271),
+        "employment_years": str(1 + (repeat_idx + group_idx) % 12),
+        "collateral_value": str(80_000 + serial * 2_137),
+        "utilization_ratio": f"{0.35 + (serial % 61) / 100:.2f}",
+        "requested_limit": str(5_000 + serial * 173),
+        "business_id": f"B{group_idx:03d}-{repeat_idx:04d}",
+        "years_in_business": str(1 + serial % 15),
+        "annual_revenue": str(200_000 + serial * 7_919),
+        "annual_profit": str(-10_000 + (serial % 20) * 8_500),
+        "existing_debt": str(30_000 + serial * 1_337),
+        "transaction_id": f"TX{group_idx:03d}-{repeat_idx:04d}",
+        "transaction_amount": f"{50 + serial * 37.25:.2f}",
+        "country_risk": ("low", "medium", "high")[serial % 3],
+        "device_trust": ("trusted", "unknown", "untrusted")[serial % 3],
+        "failed_attempts": str(serial % 7),
+        "anomaly_score": f"{0.35 + (serial % 64) / 100:.2f}",
+        "applicant_id": f"A{group_idx:03d}-{repeat_idx:04d}",
+        "bmi": f"{18.0 + (serial % 210) / 10:.1f}",
+        "smoker": "yes" if serial % 4 == 0 else "no",
+        "chronic_conditions": str(serial % 4),
+        "coverage_amount": str(100_000 + serial * 3_721),
+        "patient_id": f"P{group_idx:03d}-{repeat_idx:04d}",
+        "blood_glucose": f"{4.5 + (serial % 45) / 10:.1f}",
+        "systolic_bp": str(105 + serial % 55),
+        "diastolic_bp": str(65 + serial % 35),
+        "ticket_id": f"T{group_idx:03d}-{repeat_idx:04d}",
+        "customer_tier": ("standard", "gold", "premium")[serial % 3],
+        "issue_category": ("general", "payment", "security")[serial % 3],
+        "sentiment": ("positive", "neutral", "negative")[serial % 3],
+        "wait_hours": str(1 + serial % 48),
+        "previous_contacts": str(serial % 5),
+        "supplier_id": f"S{group_idx:03d}-{repeat_idx:04d}",
+        "on_time_rate": f"{0.78 + (serial % 23) / 100:.2f}",
+        "defect_rate": f"{0.01 + (serial % 9) / 100:.2f}",
+        "financial_score": str(40 + serial % 61),
+        "dependency_ratio": f"{0.20 + (serial % 66) / 100:.2f}",
+        "contract_id": f"CT{group_idx:03d}-{repeat_idx:04d}",
+        "contract_value": str(100_000 + serial * 51_337),
+        "jurisdiction_risk": ("low", "medium", "high")[serial % 3],
+        "missing_clauses": str(serial % 4),
+        "counterparty_risk": ("low", "medium", "high")[serial % 3],
+        "student_id": f"ST{group_idx:03d}-{repeat_idx:04d}",
+        "rubric_score": str(55 + serial % 46),
+        "citation_count": str(serial % 12),
+        "plagiarism_score": f"{(serial % 51) / 100:.2f}",
+        "late_days": str(serial % 6),
+        "alert_id": f"AL{group_idx:03d}-{repeat_idx:04d}",
+        "severity": ("low", "medium", "high", "critical")[serial % 4],
+        "affected_hosts": str(1 + serial % 12),
+        "privilege_level": ("user", "admin", "system")[serial % 3],
+        "employee_id": f"E{group_idx:03d}-{repeat_idx:04d}",
+        "tenure_years": str(1 + serial % 20),
+        "overtime_hours": str(10 + serial % 71),
+        "satisfaction_score": str(20 + serial % 81),
+        "salary_ratio": f"{0.65 + (serial % 61) / 100:.2f}",
+        "shipment_id": f"SH{group_idx:03d}-{repeat_idx:04d}",
+        "delay_hours": str(serial % 49),
+        "temperature_breach": "yes" if serial % 5 == 0 else "no",
+        "route_risk": ("low", "medium", "high")[serial % 3],
+        "goods_value": str(10_000 + serial * 2_119),
+        "content_id": f"CO{group_idx:03d}-{repeat_idx:04d}",
+        "toxicity_score": f"{0.10 + (serial % 90) / 100:.2f}",
+        "violence_score": f"{0.05 + (serial % 75) / 100:.2f}",
+        "self_harm_score": f"{0.02 + (serial % 60) / 100:.2f}",
+        "user_reports": str(serial % 30),
+        "asset_id": f"AS{group_idx:03d}-{repeat_idx:04d}",
+        "vibration": f"{2.0 + (serial % 85) / 10:.1f}",
+        "temperature": str(55 + serial % 51),
+        "operating_hours": str(500 + serial * 137),
+        "fault_count": str(serial % 8),
+    }
+
+
 def build_workload(
     tokenizer: object,
     groups: int,
     repeats: int,
     seed: int,
 ) -> list[dict[str, Any]]:
+    if groups > len(SCENARIO_TEMPLATES):
+        raise ValueError(
+            f"groups={groups} exceeds the {len(SCENARIO_TEMPLATES)} "
+            "available scenarios"
+        )
+
     requests: list[dict[str, Any]] = []
     for repeat_idx in range(repeats):
         group_order = list(range(groups))
         random.Random(seed + repeat_idx).shuffle(group_order)
         for group_idx in group_order:
+            scenario = SCENARIO_TEMPLATES[group_idx]
+            values = build_instance_values(group_idx, repeat_idx)
+            instance = "; ".join(
+                f"{field_name}={values[field_name]}"
+                for field_name in scenario.input_fields
+            )
             # Shared instruction and schema are placed before all changing values
             # so vLLM can reuse them as a contiguous prefix.
             parts = [
-                PromptPart(
-                    "You are a structured risk-analysis assistant. "
-                    f"Use business policy template {group_idx:03d}.\n",
-                    "instruction",
-                ),
-                PromptPart(
-                    "Input fields: customer_id, age, monthly_income, debt, "
-                    "credit_score, overdue_count, requested_amount.\n"
-                    "Output fields: risk_level, reasons, approval, advice.\n"
-                    "Analyze only the following instance values.\n",
-                    "schema",
-                ),
-                PromptPart(
-                    "instance_values: "
-                    f"customer_id=C{group_idx:03d}-{repeat_idx:04d}; "
-                    f"age={20 + (repeat_idx * 7 + group_idx) % 55}; "
-                    f"monthly_income={5000 + repeat_idx * 317 + group_idx * 41}; "
-                    f"debt={10000 + repeat_idx * 997 + group_idx * 113}; "
-                    f"credit_score={520 + (repeat_idx * 17 + group_idx) % 260}; "
-                    f"overdue_count={(repeat_idx + group_idx) % 6}; "
-                    "requested_amount="
-                    f"{50000 + repeat_idx * 1231 + group_idx * 271}.\n",
-                    "slot",
-                ),
+                PromptPart(scenario.build_instruction(), "instruction"),
+                PromptPart(scenario.build_schema(), "schema"),
+                PromptPart(f"instance_values: {instance}.\n", "slot"),
             ]
             prompt, metadata = build_slot_offload_prompt(parts, tokenizer)
             token_ids = tokenizer.encode(prompt, add_special_tokens=False)
             requests.append(
                 {
                     "group": group_idx,
+                    "scenario": scenario.name,
                     "repeat": repeat_idx,
                     "prompt": prompt,
                     "metadata": metadata,
@@ -174,6 +570,7 @@ def main() -> None:
             "mode": args.mode,
             "request_index": index,
             "group": item["group"],
+            "scenario": item["scenario"],
             "repeat": item["repeat"],
             "prompt_tokens": item["prompt_tokens"],
             "ttft_ms": round(ttft_ms, 3),
@@ -195,6 +592,7 @@ def main() -> None:
         "mode": args.mode,
         "requests": len(rows),
         "groups": args.groups,
+        "scenarios": [scenario.name for scenario in SCENARIO_TEMPLATES[: args.groups]],
         "repeats": args.repeats,
         "prompt_tokens_total": sum(int(row["prompt_tokens"]) for row in rows),
         "ttft_ms_mean": statistics.fmean(ttfts),

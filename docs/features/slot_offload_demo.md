@@ -117,6 +117,14 @@ All modes use the same deterministic workload, a 16 MiB GPU KV cache, and a
 request's slot metadata. The slot mode skips slot-value blocks, while value
 mode also considers reuse history, estimated cost, and cache pressure.
 
+The default 16 groups are representative scenarios rather than numeric
+placeholders: personal and mortgage lending, credit-card limits, small-business
+lending, transaction fraud, insurance underwriting, health screening, support
+triage, supplier risk, contract compliance, assignment grading, cybersecurity,
+employee attrition, logistics, content moderation, and predictive maintenance.
+Each scenario has distinct fixed rules and fields; only its instance values
+change across repeats.
+
 Compare the completed runs:
 
 ```bash
