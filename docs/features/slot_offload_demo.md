@@ -157,3 +157,92 @@ slot_results/
 `requests.csv` contains per-request TTFT and end-to-end latency.
 `summary.json` contains latency aggregates and metric deltas for the run.
 `comparison.md` reports native, binary slot, and value-aware results together.
+
+## Experiment Suite
+
+The experiment-suite script starts a fresh vLLM server for every strategy and
+stores the server log, request-level CSV, Prometheus deltas, and run config in
+separate directories. Always run the smoke profile first:
+
+```bash
+RESULT_ROOT=slot_experiments \
+  bash examples/features/run_slot_offload_experiment_suite.sh smoke
+```
+
+Available profiles:
+
+| Profile | Purpose |
+| --- | --- |
+| `smoke` | Three short runs that validate native, binary, and value-aware paths. |
+| `core` | GPU-only, native, threshold, binary, and value-aware on three access distributions. |
+| `reuse_distance` | Equal-frequency short, medium, and long reuse-distance traces. |
+| `ablation` | Adds structure, hotness, cost, and pressure components incrementally. |
+| `sensitivity` | Compares `min_accesses` values 1, 2, and 3. |
+| `paper` | Three-seed capacity, concurrency, distribution, and generality matrix. |
+| `all` | Runs `paper`, `reuse_distance`, `ablation`, and `sensitivity`; this is a long run. |
+
+Important environment overrides include:
+
+```bash
+MODEL=Qwen/Qwen2.5-7B-Instruct
+GPU_KV_BYTES=67108864
+CPU_BYTES_OVERRIDE=268435456
+MIN_ACCESSES=2
+MAX_TOKENS=1
+RESUME=1
+RESULT_ROOT=slot_experiments_qwen7b
+```
+
+For example:
+
+```bash
+MODEL=Qwen/Qwen2.5-7B-Instruct \
+RESULT_ROOT=slot_experiments_qwen7b \
+  bash examples/features/run_slot_offload_experiment_suite.sh core
+```
+
+`RESUME=1` skips directories that already contain `summary.json`, so an
+interrupted suite can be restarted safely. At the end of each profile, the
+script writes:
+
+```text
+<result-root>/<profile>/
+  runs.csv
+  aggregate.csv
+  summary.md
+  <workload>/seed-<seed>/<strategy>/
+    run_config.json
+    requests.csv
+    summary.json
+    server.log
+    client.log
+```
+
+## Cross-Model KV Token Calibration
+
+Use the calibration script before comparing model sizes. It iteratively adjusts
+`--kv-cache-memory-bytes` until every model reports approximately the same GPU
+KV token capacity:
+
+```bash
+TARGET_TOKENS=1024 \
+MAX_MODEL_LEN=512 \
+OUTPUT_DIR=slot_gpu_kv_calibration \
+  bash examples/features/calibrate_slot_offload_gpu_kv.sh
+```
+
+The default model set is Qwen2.5 0.5B, 3B, 7B, and 14B. The default tolerance
+is 32 tokens and each model gets at most six calibration attempts. Results are
+written to:
+
+```text
+slot_gpu_kv_calibration/
+  calibration.csv
+  calibrated_gpu_kv_bytes.sh
+  <model>/iteration-<n>.log
+```
+
+The generated shell file contains an associative map from model name to the
+calibrated byte budget. Source it before launching controlled model-size runs.
+For a controlled 1:4 GPU-to-CPU token-capacity ratio, set
+`CPU_BYTES_OVERRIDE` to four times the calibrated `GPU_KV_BYTES`.
