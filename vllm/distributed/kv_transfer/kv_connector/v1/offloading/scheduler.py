@@ -1295,6 +1295,7 @@ class OffloadingConnectorScheduler:
 
         # Reset offloading manager cache
         self.manager.reset_cache()
+        self._slot_admission.reset()
 
         # Reset store progress so active requests re-offload from block 0
         for status in self._req_status.values():

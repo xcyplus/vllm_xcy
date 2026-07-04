@@ -68,6 +68,34 @@ def test_finance_scenario_set_stays_in_one_domain():
     }
 
 
+def test_agent_mcp_workload_contains_tool_schema_and_observation():
+    workload = build_workload(
+        CharTokenizer(),
+        groups=2,
+        repeats=2,
+        seed=2026,
+        scenario_set="agent_mcp",
+        prompt_style="agent_mcp",
+    )
+
+    assert {item["scenario"] for item in workload} == {
+        "personal_loan",
+        "transaction_fraud",
+    }
+    assert all("MCP 工具定义" in item["prompt"] for item in workload)
+    assert all("inputSchema" in item["prompt"] for item in workload)
+    assert all("当前用户请求" in item["prompt"] for item in workload)
+    assert all("工具观测结果" in item["prompt"] for item in workload)
+    assert all("observation_ranges" in item["metadata"] for item in workload)
+
+    first_scenario = [item for item in workload if item["group"] == 0]
+    assert (
+        first_scenario[0]["metadata"]["slot_ranges"][0][0]
+        == first_scenario[1]["metadata"]["slot_ranges"][0][0]
+    )
+    assert first_scenario[0]["prompt"] != first_scenario[1]["prompt"]
+
+
 def test_one_hit_schedule_contains_cold_templates_once():
     schedule = build_group_schedule(
         groups=10,

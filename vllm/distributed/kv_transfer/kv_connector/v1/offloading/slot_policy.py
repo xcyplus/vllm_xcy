@@ -19,10 +19,18 @@ logger = init_logger(__name__)
 
 
 _DEFAULT_STORE_TYPES = frozenset(
-    {"instruction", "template", "schema", "context", "system", "unknown"}
+    {
+        "instruction",
+        "template",
+        "schema",
+        "context",
+        "system",
+        "unknown",
+    }
 )
 _RANGE_TYPES = (
     ("slot_ranges", "slot"),
+    ("observation_ranges", "observation"),
     ("instruction_ranges", "instruction"),
     ("schema_ranges", "schema"),
     ("template_ranges", "template"),
@@ -60,6 +68,7 @@ class SlotOffloadConfig:
             "schema": 0.9,
             "template": 1.0,
             "context": 0.7,
+            "observation": 0.4,
             "system": 1.0,
             "unknown": 1.0,
         }
@@ -117,6 +126,7 @@ class SlotOffloadConfig:
                 ("schema", 0.9),
                 ("template", 1.0),
                 ("context", 0.7),
+                ("observation", 0.4),
                 ("system", 1.0),
                 ("unknown", 1.0),
             )
@@ -327,6 +337,7 @@ def classify_offload_block(
     for field_name, block_type in (
         ("instruction_ranges", "instruction"),
         ("slot_ranges", "slot"),
+        ("observation_ranges", "observation"),
         ("template_ranges", "template"),
         ("schema_ranges", "schema"),
         ("context_ranges", "context"),
@@ -362,6 +373,16 @@ class SlotOffloadAdmissionPolicy:
         while len(self._hotness) > self.config.max_tracker_size:
             self._hotness.popitem(last=False)
         return entry
+
+    def reset(self) -> None:
+        """Forget all reuse history tracked by this admission policy."""
+
+        self._observation = 0
+        self._hotness.clear()
+
+    @property
+    def tracker_size(self) -> int:
+        return len(self._hotness)
 
     def _structure_score(self, structure: BlockStructure) -> float:
         score = -self.config.slot_penalty * structure.slot_ratio

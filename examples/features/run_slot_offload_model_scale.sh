@@ -19,9 +19,9 @@ MODELS=(
 )
 
 case "$PROFILE" in
-  smoke|core|reuse_distance|ablation|sensitivity|paper|all) ;;
+  smoke|agent_smoke|core|agent_core|reuse_distance|ablation|sensitivity|paper|all) ;;
   *)
-    echo "Usage: $0 {smoke|core|reuse_distance|ablation|sensitivity|paper|all}"
+    echo "Usage: $0 {smoke|agent_smoke|core|agent_core|reuse_distance|ablation|sensitivity|paper|all}"
     exit 2
     ;;
 esac

@@ -63,6 +63,9 @@ def load_runs(result_root: Path) -> list[dict[str, Any]]:
         runs.append(
             {
                 **config,
+                "prompt_style": summary.get(
+                    "prompt_style", config.get("prompt_style", "structured")
+                ),
                 "result_dir": str(summary_path.parent),
                 "gpu_capacity_tokens": summary.get("gpu_capacity_tokens") or 0,
                 "cpu_capacity_tokens": summary.get("cpu_capacity_tokens") or 0,
@@ -111,6 +114,7 @@ def aggregate_runs(runs: list[dict[str, Any]]) -> list[dict[str, Any]]:
     dimensions = (
         "model",
         "scenario_set",
+        "prompt_style",
         "distribution",
         "requests",
         "concurrency",
@@ -205,16 +209,17 @@ def write_markdown(path: Path, rows: list[dict[str, Any]]) -> None:
     lines = [
         "# SlotOffload Experiment Summary",
         "",
-        "| Scenario | Distribution | CPU MiB | Conc. | Strategy | "
+        "| Scenario | Prompt | Distribution | CPU MiB | Conc. | Strategy | "
         "rho G | rho C | Reuse D | TTFT mean (ms) | P95 (ms) | P99 (ms) | "
         "Req/s | Store MiB | Load MiB | Hit tokens | TTFT vs native | "
         "Store vs native | Hit retention |",
-        "| --- | --- | ---: | ---: | --- | ---: | ---: | ---: | ---: | "
+        "| --- | --- | --- | ---: | ---: | --- | ---: | ---: | ---: | ---: | "
         "---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
     ]
     for row in rows:
         lines.append(
-            f"| {row['scenario_set']} | {row['distribution']} | "
+            f"| {row['scenario_set']} | {row['prompt_style']} | "
+            f"{row['distribution']} | "
             f"{int(row['cpu_bytes']) / 1_048_576:.0f} | "
             f"{row['concurrency']} | {row['strategy']} | "
             f"{row['rho_gpu_mean']:.3f} | {row['rho_cpu_mean']:.3f} | "

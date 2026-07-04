@@ -42,6 +42,27 @@ def test_block_structure_calculates_token_ratios():
     assert structure.primary_type == "instruction"
 
 
+def test_block_structure_recognizes_observation_ranges():
+    structure = get_block_structure(
+        {
+            "slot_offload": {
+                "schema_ranges": [[0, 2]],
+                "observation_ranges": [[2, 6]],
+                "slot_ranges": [[6, 8]],
+            }
+        },
+        block_idx=0,
+        offloaded_block_size=8,
+    )
+
+    assert structure.token_counts == {
+        "schema": 2,
+        "observation": 4,
+        "slot": 2,
+    }
+    assert structure.primary_type == "observation"
+
+
 def test_value_aware_policy_delays_cold_shared_block():
     policy = SlotOffloadAdmissionPolicy(_config(), kv_bytes_per_block=196_608)
     params = {"slot_offload": {"block_types": ["instruction"]}}
@@ -141,3 +162,37 @@ def test_requests_without_metadata_keep_default_store_behavior():
 
     assert decision.should_store
     assert decision.reason == "no_metadata"
+
+
+def test_policy_reset_clears_reuse_history():
+    policy = SlotOffloadAdmissionPolicy(_config(), kv_bytes_per_block=196_608)
+    params = {"slot_offload": {"block_types": ["instruction"]}}
+
+    policy.evaluate(
+        key="shared-block",
+        kv_transfer_params=params,
+        block_idx=0,
+        offloaded_block_size=16,
+    )
+    admitted = policy.evaluate(
+        key="shared-block",
+        kv_transfer_params=params,
+        block_idx=0,
+        offloaded_block_size=16,
+    )
+
+    assert admitted.should_store
+    assert policy.tracker_size == 1
+
+    policy.reset()
+    after_reset = policy.evaluate(
+        key="shared-block",
+        kv_transfer_params=params,
+        block_idx=0,
+        offloaded_block_size=16,
+    )
+
+    assert policy.tracker_size == 1
+    assert not after_reset.should_store
+    assert after_reset.reason == "cold"
+    assert after_reset.access_count == 1

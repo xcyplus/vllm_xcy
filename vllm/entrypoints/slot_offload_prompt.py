@@ -37,8 +37,9 @@ def build_slot_offload_prompt(
 
     Args:
         parts: Ordered prompt fragments. Supported kinds include
-            ``instruction``, ``schema``, ``slot``, ``context``, ``template`` and
-            ``system``. Unknown kinds are still emitted as ``<kind>_ranges``.
+            ``instruction``, ``schema``, ``slot``, ``observation``,
+            ``context``, ``template`` and ``system``. Unknown kinds are still
+            emitted as ``<kind>_ranges``.
         tokenizer: Any tokenizer object with an ``encode`` method.
 
     Returns:
@@ -110,6 +111,7 @@ def build_block_types_from_ranges(
 
     priority = (
         ("slot_ranges", "slot"),
+        ("observation_ranges", "observation"),
         ("context_ranges", "context"),
         ("schema_ranges", "schema"),
         ("instruction_ranges", "instruction"),

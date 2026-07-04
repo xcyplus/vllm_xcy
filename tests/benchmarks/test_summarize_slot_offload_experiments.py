@@ -10,6 +10,7 @@ def make_run(strategy: str, seed: int, ttft: float, store_mb: float) -> dict:
     return {
         "model": "model",
         "scenario_set": "finance",
+        "prompt_style": "structured",
         "distribution": "one_hit",
         "requests": 100,
         "concurrency": 1,

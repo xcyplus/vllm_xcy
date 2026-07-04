@@ -13,6 +13,7 @@ CPU_BYTES_OVERRIDE="${CPU_BYTES_OVERRIDE:-}"
 MAX_MODEL_LEN="${MAX_MODEL_LEN:-2048}"
 MAX_TOKENS="${MAX_TOKENS:-1}"
 WARMUP_REQUESTS="${WARMUP_REQUESTS:-0}"
+PROMPT_STYLE="${PROMPT_STYLE:-}"
 MIN_ACCESSES="${MIN_ACCESSES:-1}"
 MAX_SLOT_RATIO="${MAX_SLOT_RATIO:-0.5}"
 BASE_THRESHOLD="${BASE_THRESHOLD:-0.2}"
@@ -29,11 +30,19 @@ fi
 
 case "$PROFILE" in
   smoke)
+    PROMPT_STYLE="${PROMPT_STYLE:-structured}"
     STRATEGIES=(native binary value)
     SEEDS=(2026)
     WORKLOADS=("finance one_hit 64 1 64")
     ;;
+  agent_smoke)
+    PROMPT_STYLE="${PROMPT_STYLE:-agent_mcp}"
+    STRATEGIES=(native binary value)
+    SEEDS=(2026)
+    WORKLOADS=("agent_mcp zipf 96 1 67108864")
+    ;;
   core)
+    PROMPT_STYLE="${PROMPT_STYLE:-structured}"
     STRATEGIES=(gpu_only native threshold binary value)
     SEEDS=(2026)
     WORKLOADS=(
@@ -42,12 +51,26 @@ case "$PROFILE" in
       "finance zipf 256 1 67108864"
     )
     ;;
+  agent_core)
+    PROMPT_STYLE="${PROMPT_STYLE:-agent_mcp}"
+    STRATEGIES=(gpu_only native threshold binary value)
+    SEEDS=(2026 2027 2028)
+    WORKLOADS=(
+      "agent_mcp uniform 512 1 67108864"
+      "agent_mcp one_hit 512 1 67108864"
+      "agent_mcp zipf 512 1 67108864"
+      "agent_mcp reuse_short 512 1 67108864"
+      "agent_mcp reuse_long 512 1 67108864"
+    )
+    ;;
   ablation)
+    PROMPT_STYLE="${PROMPT_STYLE:-structured}"
     STRATEGIES=(binary value_structure value_hotness value_cost value)
     SEEDS=(2026 2027 2028)
     WORKLOADS=("finance one_hit 1000 1 33554432")
     ;;
   sensitivity)
+    PROMPT_STYLE="${PROMPT_STYLE:-structured}"
     STRATEGIES=(value_min1 value_min2 value_min3)
     SEEDS=(2026 2027 2028)
     WORKLOADS=(
@@ -56,6 +79,7 @@ case "$PROFILE" in
     )
     ;;
   reuse_distance)
+    PROMPT_STYLE="${PROMPT_STYLE:-structured}"
     STRATEGIES=(native threshold binary value)
     SEEDS=(2026 2027 2028)
     WORKLOADS=(
@@ -65,6 +89,7 @@ case "$PROFILE" in
     )
     ;;
   paper)
+    PROMPT_STYLE="${PROMPT_STYLE:-structured}"
     STRATEGIES=(gpu_only native threshold binary value)
     SEEDS=(2026 2027 2028)
     WORKLOADS=(
@@ -82,7 +107,7 @@ case "$PROFILE" in
     )
     ;;
   *)
-    echo "Usage: $0 {smoke|core|reuse_distance|ablation|sensitivity|paper|all}"
+    echo "Usage: $0 {smoke|agent_smoke|core|agent_core|reuse_distance|ablation|sensitivity|paper|all}"
     exit 2
     ;;
 esac
@@ -110,6 +135,7 @@ groups_for_set() {
   case "$1" in
     finance) echo 8 ;;
     operations) echo 7 ;;
+    agent_mcp) echo 8 ;;
     mixed) echo 16 ;;
     *) return 1 ;;
   esac
@@ -248,6 +274,7 @@ run_one() {
   "strategy": "${strategy}",
   "model": "${MODEL}",
   "scenario_set": "${scenario_set}",
+  "prompt_style": "${PROMPT_STYLE}",
   "distribution": "${distribution}",
   "requests": ${requests},
   "concurrency": ${concurrency},
@@ -273,6 +300,7 @@ JSON
     --model "$MODEL" \
     --mode "$strategy" \
     --scenario-set "$scenario_set" \
+    --prompt-style "$PROMPT_STYLE" \
     --distribution "$distribution" \
     --groups "$groups" \
     --requests "$requests" \

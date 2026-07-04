@@ -116,6 +116,15 @@ FIELD_LABELS = {
 
 
 @dataclass(frozen=True)
+class ToolSpec:
+    """A synthetic MCP-style tool exposed to an agent prompt."""
+
+    name: str
+    description: str
+    parameters: tuple[str, ...]
+
+
+@dataclass(frozen=True)
 class ScenarioTemplate:
     """A representative structured-prompt workload scenario."""
 
@@ -141,6 +150,20 @@ class ScenarioTemplate:
             f"输入字段：{input_fields}。\n"
             f"输出字段：{'、'.join(self.output_fields)}。\n"
             "仅根据下方实例数据进行分析。\n"
+        )
+
+    def build_agent_instruction(self) -> str:
+        rules = "\n".join(
+            f"{index}. {rule}" for index, rule in enumerate(self.rules, start=1)
+        )
+        return (
+            f"你是{self.role} Agent，运行在支持 MCP 工具调用的推理服务中。\n"
+            "目标：读取当前用户请求，必要时参考工具观测结果，并生成可审计的"
+            "结构化决策。\n"
+            "执行规则：\n"
+            f"{rules}\n"
+            "不得虚构工具未返回的信息；不得把用户私有字段写入规则解释；"
+            "最终输出必须符合下方 JSON 输出协议。\n"
         )
 
 
@@ -437,8 +460,194 @@ SCENARIO_TEMPLATES = (
 SCENARIO_SETS = {
     "finance": (0, 1, 2, 3, 4, 5, 8, 9),
     "operations": (7, 8, 9, 11, 12, 13, 15),
+    "agent_mcp": (0, 4, 7, 9, 10, 11, 13, 15),
     "mixed": tuple(range(len(SCENARIO_TEMPLATES))),
 }
+
+AGENT_TOOLSETS: dict[str, tuple[ToolSpec, ...]] = {
+    "personal_loan": (
+        ToolSpec("query_credit_profile", "查询客户征信摘要", ("customer_id",)),
+        ToolSpec(
+            "calculate_debt_ratio",
+            "根据收入和负债计算偿债压力",
+            ("monthly_income", "debt"),
+        ),
+        ToolSpec("create_manual_review", "创建人工复核任务", ("customer_id",)),
+    ),
+    "transaction_fraud": (
+        ToolSpec(
+            "lookup_device_risk",
+            "查询支付设备与登录环境风险",
+            ("transaction_id", "device_trust"),
+        ),
+        ToolSpec(
+            "block_transaction",
+            "对高风险支付交易执行拦截",
+            ("transaction_id", "anomaly_score"),
+        ),
+    ),
+    "support_ticket_triage": (
+        ToolSpec("search_ticket_history", "查询客户历史工单", ("ticket_id",)),
+        ToolSpec(
+            "escalate_ticket",
+            "将高优先级工单升级到人工队列",
+            ("ticket_id", "issue_category"),
+        ),
+    ),
+    "contract_compliance": (
+        ToolSpec("lookup_clause_library", "查询标准合同条款库", ("contract_id",)),
+        ToolSpec(
+            "request_legal_review",
+            "提交法务复核请求",
+            ("contract_id", "jurisdiction_risk"),
+        ),
+    ),
+    "assignment_grading": (
+        ToolSpec("load_grading_rubric", "读取课程评分量表", ("student_id",)),
+        ToolSpec(
+            "check_similarity_report",
+            "查询作业相似度检测报告",
+            ("student_id", "plagiarism_score"),
+        ),
+    ),
+    "cybersecurity_alert": (
+        ToolSpec("query_security_logs", "查询安全日志片段", ("alert_id",)),
+        ToolSpec(
+            "isolate_hosts",
+            "隔离受影响主机",
+            ("alert_id", "affected_hosts"),
+        ),
+    ),
+    "logistics_exception": (
+        ToolSpec("track_shipment", "查询运单实时轨迹", ("shipment_id",)),
+        ToolSpec(
+            "notify_customer",
+            "生成物流异常客户通知",
+            ("shipment_id", "delay_hours"),
+        ),
+    ),
+    "predictive_maintenance": (
+        ToolSpec("query_sensor_window", "查询设备传感器窗口", ("asset_id",)),
+        ToolSpec(
+            "schedule_maintenance",
+            "创建预测性维护计划",
+            ("asset_id", "fault_count"),
+        ),
+    ),
+}
+
+
+def get_agent_tools(scenario: ScenarioTemplate) -> tuple[ToolSpec, ...]:
+    tools = AGENT_TOOLSETS.get(scenario.name)
+    if tools:
+        return tools
+    return (
+        ToolSpec(
+            f"lookup_{scenario.name}_record",
+            f"查询{scenario.role}所需的业务记录",
+            scenario.input_fields[:2],
+        ),
+        ToolSpec(
+            f"create_{scenario.name}_review",
+            f"创建{scenario.role}人工复核任务",
+            scenario.input_fields[:1],
+        ),
+    )
+
+
+def build_mcp_tool_schema(scenario: ScenarioTemplate) -> str:
+    """Build a stable MCP-like tool schema section for one agent."""
+
+    tools = []
+    for tool in get_agent_tools(scenario):
+        properties = {
+            parameter: {
+                "type": "string",
+                "description": FIELD_LABELS.get(parameter, parameter),
+            }
+            for parameter in tool.parameters
+        }
+        tools.append(
+            {
+                "name": tool.name,
+                "description": tool.description,
+                "inputSchema": {
+                    "type": "object",
+                    "properties": properties,
+                    "required": list(tool.parameters),
+                },
+            }
+        )
+
+    output_schema = {
+        "type": "object",
+        "properties": {
+            field: {"type": "string"} for field in scenario.output_fields
+        },
+        "required": list(scenario.output_fields),
+    }
+    return (
+        "MCP 工具定义(JSON Schema)：\n"
+        f"{json.dumps({'tools': tools}, ensure_ascii=False, indent=2)}\n"
+        "最终输出协议(JSON Schema)：\n"
+        f"{json.dumps(output_schema, ensure_ascii=False, indent=2)}\n"
+        "工具调用约束：只有当当前请求字段与工具 inputSchema 匹配时才允许"
+        "调用；工具参数必须来自当前用户请求或工具观测结果。\n"
+    )
+
+
+def build_agent_slot(
+    scenario: ScenarioTemplate,
+    values: dict[str, str],
+    *,
+    group_idx: int,
+    repeat_idx: int,
+) -> str:
+    inputs = {
+        FIELD_LABELS[field_name]: values[field_name]
+        for field_name in scenario.input_fields
+    }
+    request = {
+        "request_id": f"agent-{group_idx:03d}-{repeat_idx:04d}",
+        "agent": scenario.name,
+        "user_message": f"请处理这条{scenario.role}请求，并给出结构化结论。",
+        "input": inputs,
+    }
+    return (
+        "当前用户请求(JSON)：\n"
+        f"{json.dumps(request, ensure_ascii=False, indent=2)}\n"
+    )
+
+
+def build_agent_observation(
+    scenario: ScenarioTemplate,
+    values: dict[str, str],
+    *,
+    group_idx: int,
+    repeat_idx: int,
+) -> str:
+    tool = get_agent_tools(scenario)[0]
+    evidence = "；".join(
+        f"{FIELD_LABELS[field]}={values[field]}" for field in tool.parameters
+    )
+    observation = {
+        "jsonrpc": "2.0",
+        "id": f"obs-{group_idx:03d}-{repeat_idx:04d}",
+        "result": {
+            "tool": tool.name,
+            "content": [
+                {
+                    "type": "text",
+                    "text": f"工具返回摘要：{evidence}；未发现字段缺失。",
+                }
+            ],
+            "isError": False,
+        },
+    }
+    return (
+        "工具观测结果(JSON-RPC)：\n"
+        f"{json.dumps(observation, ensure_ascii=False, indent=2)}\n"
+    )
 
 
 def parse_args() -> argparse.Namespace:
@@ -451,6 +660,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--requests", type=int)
     parser.add_argument(
         "--scenario-set", choices=tuple(SCENARIO_SETS), default="mixed"
+    )
+    parser.add_argument(
+        "--prompt-style",
+        choices=("structured", "agent_mcp"),
+        default="structured",
     )
     parser.add_argument(
         "--distribution",
@@ -724,6 +938,7 @@ def build_workload(
     seed: int,
     *,
     scenario_set: str = "mixed",
+    prompt_style: str = "structured",
     distribution: str = "uniform",
     num_requests: int | None = None,
     zipf_alpha: float = 1.2,
@@ -752,16 +967,40 @@ def build_workload(
         occurrences[group_idx] += 1
         scenario = SCENARIO_TEMPLATES[scenario_indices[group_idx]]
         values = build_instance_values(group_idx, repeat_idx)
-        instance = "；".join(
-            f"{FIELD_LABELS[field_name]}={values[field_name]}"
-            for field_name in scenario.input_fields
-        )
-        # Shared content precedes all changing values for exact prefix reuse.
-        parts = [
-            PromptPart(scenario.build_instruction(), "instruction"),
-            PromptPart(scenario.build_schema(), "schema"),
-            PromptPart(f"实例数据：{instance}。\n", "slot"),
-        ]
+        if prompt_style == "agent_mcp":
+            parts = [
+                PromptPart(scenario.build_agent_instruction(), "instruction"),
+                PromptPart(build_mcp_tool_schema(scenario), "schema"),
+                PromptPart(
+                    build_agent_slot(
+                        scenario,
+                        values,
+                        group_idx=group_idx,
+                        repeat_idx=repeat_idx,
+                    ),
+                    "slot",
+                ),
+                PromptPart(
+                    build_agent_observation(
+                        scenario,
+                        values,
+                        group_idx=group_idx,
+                        repeat_idx=repeat_idx,
+                    ),
+                    "observation",
+                ),
+            ]
+        else:
+            instance = "；".join(
+                f"{FIELD_LABELS[field_name]}={values[field_name]}"
+                for field_name in scenario.input_fields
+            )
+            # Shared content precedes all changing values for exact prefix reuse.
+            parts = [
+                PromptPart(scenario.build_instruction(), "instruction"),
+                PromptPart(scenario.build_schema(), "schema"),
+                PromptPart(f"实例数据：{instance}。\n", "slot"),
+            ]
         prompt, metadata = build_slot_offload_prompt(parts, tokenizer)
         token_ids = tokenizer.encode(prompt, add_special_tokens=False)
         requests.append(
@@ -828,6 +1067,7 @@ def main() -> None:
         args.repeats,
         args.seed,
         scenario_set=args.scenario_set,
+        prompt_style=args.prompt_style,
         distribution=args.distribution,
         num_requests=args.requests,
         zipf_alpha=args.zipf_alpha,
@@ -842,6 +1082,7 @@ def main() -> None:
             args.repeats,
             args.seed - 1,
             scenario_set=args.scenario_set,
+            prompt_style=args.prompt_style,
             distribution="uniform",
             num_requests=args.warmup_requests,
         )
@@ -893,6 +1134,7 @@ def main() -> None:
         "requests": len(rows),
         "groups": args.groups,
         "scenario_set": args.scenario_set,
+        "prompt_style": args.prompt_style,
         "scenarios": sorted({str(row["scenario"]) for row in rows}),
         "distribution": args.distribution,
         "zipf_alpha": args.zipf_alpha,
