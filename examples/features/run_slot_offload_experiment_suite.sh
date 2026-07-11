@@ -14,6 +14,7 @@ MAX_MODEL_LEN="${MAX_MODEL_LEN:-2048}"
 MAX_TOKENS="${MAX_TOKENS:-1}"
 WARMUP_REQUESTS="${WARMUP_REQUESTS:-0}"
 PROMPT_STYLE="${PROMPT_STYLE:-}"
+BFCL_DATA="${BFCL_DATA:-}"
 MIN_ACCESSES="${MIN_ACCESSES:-1}"
 MAX_SLOT_RATIO="${MAX_SLOT_RATIO:-0.5}"
 BASE_THRESHOLD="${BASE_THRESHOLD:-0.2}"
@@ -40,6 +41,22 @@ case "$PROFILE" in
     STRATEGIES=(native binary value)
     SEEDS=(2026)
     WORKLOADS=("agent_mcp zipf 96 1 67108864")
+    ;;
+  bfcl_smoke)
+    PROMPT_STYLE="${PROMPT_STYLE:-bfcl}"
+    STRATEGIES=(native binary value)
+    SEEDS=(2026)
+    WORKLOADS=("bfcl zipf 96 1 67108864")
+    ;;
+  bfcl_core)
+    PROMPT_STYLE="${PROMPT_STYLE:-bfcl}"
+    STRATEGIES=(gpu_only native threshold binary value)
+    SEEDS=(2026 2027 2028)
+    WORKLOADS=(
+      "bfcl uniform 256 1 67108864"
+      "bfcl zipf 256 1 67108864"
+      "bfcl reuse_long 256 1 67108864"
+    )
     ;;
   core)
     PROMPT_STYLE="${PROMPT_STYLE:-structured}"
@@ -107,7 +124,7 @@ case "$PROFILE" in
     )
     ;;
   *)
-    echo "Usage: $0 {smoke|agent_smoke|core|agent_core|reuse_distance|ablation|sensitivity|paper|all}"
+    echo "Usage: $0 {smoke|agent_smoke|bfcl_smoke|core|agent_core|bfcl_core|reuse_distance|ablation|sensitivity|paper|all}"
     exit 2
     ;;
 esac
@@ -136,6 +153,7 @@ groups_for_set() {
     finance) echo 8 ;;
     operations) echo 7 ;;
     agent_mcp) echo 8 ;;
+    bfcl) echo "${BFCL_GROUPS:-8}" ;;
     mixed) echo 16 ;;
     *) return 1 ;;
   esac
@@ -290,10 +308,14 @@ JSON
   echo "Starting ${strategy}: ${workload_id}, seed=${seed}"
   start_server "$strategy" "$cpu_bytes" "${result_dir}/server.log"
   local cpu_capacity_tokens=0
+  local bfcl_args=()
   if [[ "$strategy" != "gpu_only" ]]; then
     cpu_capacity_tokens=$((
       cpu_bytes * CURRENT_GPU_CACHE_TOKENS / GPU_KV_BYTES
     ))
+  fi
+  if [[ -n "$BFCL_DATA" ]]; then
+    bfcl_args=(--bfcl-data "$BFCL_DATA")
   fi
   .venv/bin/python benchmarks/slot_offload_benchmark.py \
     --endpoint "http://localhost:${PORT}" \
@@ -313,6 +335,7 @@ JSON
     --max-tokens "$MAX_TOKENS" \
     --seed "$seed" \
     --output-dir "$result_dir" \
+    "${bfcl_args[@]}" \
     2>&1 | tee "${result_dir}/client.log"
   stop_server
 }

@@ -10,6 +10,7 @@ from benchmarks.slot_offload_benchmark import (
     analyze_workload,
     build_group_schedule,
     build_workload,
+    load_bfcl_records,
 )
 
 
@@ -94,6 +95,60 @@ def test_agent_mcp_workload_contains_tool_schema_and_observation():
         == first_scenario[1]["metadata"]["slot_ranges"][0][0]
     )
     assert first_scenario[0]["prompt"] != first_scenario[1]["prompt"]
+
+
+def test_bfcl_workload_uses_public_tool_schema_shape(tmp_path):
+    data = tmp_path / "bfcl.jsonl"
+    data.write_text(
+        "\n".join(
+            [
+                (
+                    '{"id":"simple_0","question":[[{"role":"user",'
+                    '"content":"Find the weather in Paris."}]],'
+                    '"function":[{"name":"get_weather","description":'
+                    '"Get weather.","parameters":{"type":"object",'
+                    '"properties":{"city":{"type":"string"}}}}]}'
+                ),
+                (
+                    '{"id":"simple_1","question":[[{"role":"user",'
+                    '"content":"Book a hotel in Berlin."}]],'
+                    '"function":[{"name":"book_hotel","description":'
+                    '"Book hotel.","parameters":{"type":"object",'
+                    '"properties":{"city":{"type":"string"}}}}]}'
+                ),
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    workload = build_workload(
+        CharTokenizer(),
+        groups=2,
+        repeats=2,
+        seed=2026,
+        scenario_set="bfcl",
+        prompt_style="bfcl",
+        bfcl_data=data,
+    )
+
+    assert len(load_bfcl_records(data)) == 2
+    assert len(workload) == 4
+    assert all("可用函数定义" in item["prompt"] for item in workload)
+    assert all("当前用户请求" in item["prompt"] for item in workload)
+    assert all("observation_ranges" in item["metadata"] for item in workload)
+    assert {item["scenario"] for item in workload} == {"simple_0", "simple_1"}
+
+
+def test_bfcl_workload_requires_data_path():
+    with pytest.raises(ValueError, match="bfcl-data"):
+        build_workload(
+            CharTokenizer(),
+            groups=1,
+            repeats=1,
+            seed=2026,
+            scenario_set="bfcl",
+            prompt_style="bfcl",
+        )
 
 
 def test_one_hit_schedule_contains_cold_templates_once():

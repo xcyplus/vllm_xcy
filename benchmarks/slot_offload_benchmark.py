@@ -461,6 +461,7 @@ SCENARIO_SETS = {
     "finance": (0, 1, 2, 3, 4, 5, 8, 9),
     "operations": (7, 8, 9, 11, 12, 13, 15),
     "agent_mcp": (0, 4, 7, 9, 10, 11, 13, 15),
+    "bfcl": (),
     "mixed": tuple(range(len(SCENARIO_TEMPLATES))),
 }
 
@@ -663,8 +664,13 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--prompt-style",
-        choices=("structured", "agent_mcp"),
+        choices=("structured", "agent_mcp", "bfcl"),
         default="structured",
+    )
+    parser.add_argument(
+        "--bfcl-data",
+        type=Path,
+        help="Path to a BFCL JSONL category file for prompt-style=bfcl.",
     )
     parser.add_argument(
         "--distribution",
@@ -854,6 +860,128 @@ def build_instance_values(group_idx: int, repeat_idx: int) -> dict[str, str]:
     }
 
 
+def _bfcl_question_to_text(question: object) -> str:
+    messages: list[str] = []
+    if isinstance(question, str):
+        return question
+    if not isinstance(question, list):
+        return json.dumps(question, ensure_ascii=False, sort_keys=True)
+
+    for turn in question:
+        if isinstance(turn, dict):
+            role = turn.get("role", "user")
+            content = turn.get("content", "")
+            messages.append(f"{role}: {content}")
+        elif isinstance(turn, list):
+            for message in turn:
+                if isinstance(message, dict):
+                    role = message.get("role", "user")
+                    content = message.get("content", "")
+                    messages.append(f"{role}: {content}")
+                else:
+                    messages.append(str(message))
+        else:
+            messages.append(str(turn))
+    return "\n".join(messages)
+
+
+def load_bfcl_records(path: Path) -> list[dict[str, Any]]:
+    records: list[dict[str, Any]] = []
+    with path.open(encoding="utf-8") as file:
+        for line in file:
+            stripped = line.strip()
+            if not stripped:
+                continue
+            record = json.loads(stripped)
+            if "function" in record and "question" in record:
+                records.append(record)
+    if not records:
+        raise ValueError(f"No BFCL records found in {path}")
+    return records
+
+
+def build_bfcl_workload(
+    tokenizer: object,
+    groups: int,
+    repeats: int,
+    seed: int,
+    *,
+    bfcl_data: Path,
+    distribution: str = "uniform",
+    num_requests: int | None = None,
+    zipf_alpha: float = 1.2,
+    one_hit_fraction: float = 0.5,
+) -> list[dict[str, Any]]:
+    records = load_bfcl_records(bfcl_data)
+    if groups > len(records):
+        raise ValueError(
+            f"groups={groups} exceeds the {len(records)} BFCL records "
+            f"in {bfcl_data}"
+        )
+
+    schedule = build_group_schedule(
+        groups=groups,
+        repeats=repeats,
+        seed=seed,
+        distribution=distribution,
+        num_requests=num_requests,
+        zipf_alpha=zipf_alpha,
+        one_hit_fraction=one_hit_fraction,
+    )
+    instruction = (
+        "你是一个函数调用 Agent。请阅读可用函数定义和当前用户请求，"
+        "选择合适的函数并生成 JSON 格式的函数调用。不要编造未提供的函数。\n\n"
+    )
+    requests: list[dict[str, Any]] = []
+    occurrences = [0] * groups
+    for request_idx, group_idx in enumerate(schedule):
+        repeat_idx = occurrences[group_idx]
+        occurrences[group_idx] += 1
+        record = records[group_idx]
+        record_id = str(record.get("id", f"bfcl_{group_idx}"))
+        function_schema = json.dumps(
+            record["function"],
+            ensure_ascii=False,
+            sort_keys=True,
+            indent=2,
+        )
+        schema_text = (
+            "可用函数定义(JSON Schema)：\n"
+            f"{function_schema}\n\n"
+        )
+        slot_text = (
+            "当前用户请求：\n"
+            f"{_bfcl_question_to_text(record['question'])}\n"
+            f"请求追踪编号：bfcl-{group_idx:03d}-{repeat_idx:04d}\n"
+        )
+        observation_text = (
+            "工具观测占位：尚未执行工具调用；"
+            "请仅基于用户请求和函数定义生成调用。\n"
+        )
+        prompt, metadata = build_slot_offload_prompt(
+            [
+                PromptPart(instruction, "instruction"),
+                PromptPart(schema_text, "schema"),
+                PromptPart(slot_text, "slot"),
+                PromptPart(observation_text, "observation"),
+            ],
+            tokenizer,
+        )
+        token_ids = tokenizer.encode(prompt, add_special_tokens=False)
+        requests.append(
+            {
+                "request_index": request_idx,
+                "group": group_idx,
+                "scenario": record_id,
+                "repeat": repeat_idx,
+                "prompt": prompt,
+                "metadata": metadata,
+                "prompt_tokens": len(token_ids),
+            }
+        )
+    return requests
+
+
 def build_group_schedule(
     *,
     groups: int,
@@ -943,7 +1071,23 @@ def build_workload(
     num_requests: int | None = None,
     zipf_alpha: float = 1.2,
     one_hit_fraction: float = 0.5,
+    bfcl_data: Path | None = None,
 ) -> list[dict[str, Any]]:
+    if prompt_style == "bfcl":
+        if bfcl_data is None:
+            raise ValueError("--bfcl-data is required for prompt-style=bfcl")
+        return build_bfcl_workload(
+            tokenizer,
+            groups,
+            repeats,
+            seed,
+            bfcl_data=bfcl_data,
+            distribution=distribution,
+            num_requests=num_requests,
+            zipf_alpha=zipf_alpha,
+            one_hit_fraction=one_hit_fraction,
+        )
+
     scenario_indices = SCENARIO_SETS[scenario_set]
     if groups > len(scenario_indices):
         raise ValueError(
@@ -1072,6 +1216,7 @@ def main() -> None:
         num_requests=args.requests,
         zipf_alpha=args.zipf_alpha,
         one_hit_fraction=args.one_hit_fraction,
+        bfcl_data=args.bfcl_data,
     )
     workload_stats = analyze_workload(workload, args.offload_block_size)
 
@@ -1085,6 +1230,7 @@ def main() -> None:
             prompt_style=args.prompt_style,
             distribution="uniform",
             num_requests=args.warmup_requests,
+            bfcl_data=args.bfcl_data,
         )
         for item in warmup:
             send_streaming_request(
