@@ -6,12 +6,16 @@ import argparse
 import json
 import signal
 import subprocess
+import sys
 import time
 import urllib.request
 from pathlib import Path
 from typing import Any
 
 from transformers import AutoTokenizer
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(REPO_ROOT))
 
 from benchmarks.slot_offload_benchmark import build_workload
 
