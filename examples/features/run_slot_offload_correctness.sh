@@ -9,7 +9,7 @@ MODEL="${MODEL:-Qwen/Qwen2.5-0.5B-Instruct}"
 SCENARIO_SET="${SCENARIO_SET:-agent_mcp}"
 PROMPT_STYLE="${PROMPT_STYLE:-$SCENARIO_SET}"
 DISTRIBUTION="${DISTRIBUTION:-zipf}"
-GROUPS="${GROUPS:-8}"
+WORKLOAD_GROUPS="${WORKLOAD_GROUPS:-8}"
 REQUESTS="${REQUESTS:-32}"
 SEED="${SEED:-2026}"
 MAX_MODEL_LEN="${MAX_MODEL_LEN:-1024}"
@@ -38,7 +38,7 @@ model: ${MODEL}
 scenario_set: ${SCENARIO_SET}
 prompt_style: ${PROMPT_STYLE}
 distribution: ${DISTRIBUTION}
-groups: ${GROUPS}
+groups: ${WORKLOAD_GROUPS}
 requests: ${REQUESTS}
 seed: ${SEED}
 gpu_kv_bytes: ${GPU_KV_BYTES}
@@ -80,7 +80,7 @@ start_check() {
       --max-model-len "$MAX_MODEL_LEN" \
       --max-tokens "$MAX_TOKENS" \
       --requests "$REQUESTS" \
-      --groups "$GROUPS" \
+      --groups "$WORKLOAD_GROUPS" \
       --seed "$SEED" \
       --scenario-set "$SCENARIO_SET" \
       --prompt-style "$PROMPT_STYLE" \
